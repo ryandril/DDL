@@ -1,0 +1,35 @@
+.env
+state.json
+*.ics
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+.DS_Store
+out/
+credentials.json
+token.json
+
+# Credentials and keys — never commit
+.env.*
+!.env.example
+*.key
+*.pem
+id_ed25519*
+id_rsa*
+ssh-copy-id*
+
+# Runtime artifacts
+*.log
+cron.log
+ledger*.json
+*_ledger.json
+deadlines_ledger.json
+.cron_trigger.json
+.heartbeat_queue.txt
+
+# Build artifacts
+*.egg-info/
+build/
+dist/

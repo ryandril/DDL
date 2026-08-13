@@ -1,0 +1,176 @@
+"""Compose the digest email (HTML + plaintext) and write outputs to disk.
+
+Sending is handled outside this module: in local-test mode the user (or the
+Claude session) attaches the .ics and creates a Gmail draft; in routine mode
+the routine's Gmail tool does the same. This module only assembles content.
+"""
+from __future__ import annotations
+
+import html
+import os
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+
+@dataclass
+class DigestArtifacts:
+    subject: str
+    html_body: str
+    text_body: str
+    ics_path: Path | None
+    deadline_count: int
+    announcement_count: int
+
+
+def compose(
+    *,
+    deadlines: list,
+    summaries: list,
+    announcements_by_id: dict,
+    run_date_label: str,
+    ics_path: Path | None,
+) -> DigestArtifacts:
+    deadlines_sorted = sorted(deadlines, key=lambda d: d.datetime_local)
+    subject = _subject(len(deadlines_sorted), len(summaries), run_date_label)
+    html_body = _html(deadlines_sorted, summaries, announcements_by_id, ics_path)
+    text_body = _text(deadlines_sorted, summaries, announcements_by_id, ics_path)
+    return DigestArtifacts(
+        subject=subject,
+        html_body=html_body,
+        text_body=text_body,
+        ics_path=ics_path,
+        deadline_count=len(deadlines_sorted),
+        announcement_count=len(summaries),
+    )
+
+
+# Prefix on the digest subject line. Set DIGEST_LABEL in .env to your school.
+LABEL = os.environ.get("DIGEST_LABEL", "Canvas")
+
+
+def _subject(n_deadlines: int, n_announcements: int, date_label: str) -> str:
+    if n_deadlines == 0 and n_announcements == 0:
+        return f"[{LABEL}] No new announcements ({date_label})"
+    parts = []
+    if n_deadlines:
+        parts.append(f"{n_deadlines} deadline{'s' if n_deadlines != 1 else ''}")
+    if n_announcements:
+        parts.append(f"{n_announcements} announcement{'s' if n_announcements != 1 else ''}")
+    return f"[{LABEL}] {' + '.join(parts)} ({date_label})"
+
+
+def _confidence_badge(c: str) -> str:
+    color = {"high": "#137333", "medium": "#b06000", "low": "#a50e0e"}.get(c, "#666")
+    return f'<span style="color:{color};font-weight:600;font-size:11px">[{c.upper()}]</span>'
+
+
+def _fmt_dt(iso_local: str, all_day: bool) -> str:
+    dt = datetime.fromisoformat(iso_local)
+    if all_day:
+        return dt.strftime("%a %b %-d (all day)")
+    return dt.strftime("%a %b %-d, %H:%M")
+
+
+def _html(deadlines, summaries, announcements_by_id, ics_path) -> str:
+    parts = [
+        '<div style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:680px;line-height:1.5">',
+    ]
+
+    parts.append(f'<h2 style="margin:0 0 4px 0">📅 New deadlines ({len(deadlines)})</h2>')
+    if deadlines:
+        parts.append('<ul style="padding-left:20px;margin-top:8px">')
+        for d in deadlines:
+            parts.append(
+                f'<li style="margin-bottom:10px">'
+                f'<strong>{html.escape(_fmt_dt(d.datetime_local, d.all_day))}</strong> — '
+                f'{html.escape(d.title)} {_confidence_badge(d.confidence)}<br>'
+                f'<span style="color:#555;font-size:13px">{html.escape(d.source_course)} · '
+                f'"{html.escape(d.evidence_quote)}"</span><br>'
+                f'<a href="{html.escape(d.source_url)}" style="font-size:12px">View announcement</a>'
+                f'</li>'
+            )
+        parts.append("</ul>")
+        if ics_path is not None:
+            parts.append(
+                f'<p style="background:#f0f4ff;padding:8px 12px;border-radius:4px;font-size:13px">'
+                f"📎 <strong>{html.escape(ics_path.name)}</strong> attached — open it to add all "
+                f"{len(deadlines)} deadline{'s' if len(deadlines) != 1 else ''} to your calendar."
+                f"</p>"
+            )
+    else:
+        parts.append('<p style="color:#666;font-style:italic">No deadlines extracted from this batch.</p>')
+
+    parts.append(f'<h2 style="margin:24px 0 4px 0">📣 New announcements ({len(summaries)})</h2>')
+    if summaries:
+        parts.append('<ul style="padding-left:20px;margin-top:8px">')
+        for s in summaries:
+            a = announcements_by_id.get(s.announcement_id)
+            if not a:
+                continue
+            parts.append(
+                f'<li style="margin-bottom:8px">'
+                f'<strong>{html.escape(a.course_name)}</strong> — '
+                f'<a href="{html.escape(a.html_url)}">{html.escape(a.title)}</a><br>'
+                f'<span style="color:#555;font-size:13px">{html.escape(s.summary)}</span>'
+                f'</li>'
+            )
+        parts.append("</ul>")
+    else:
+        parts.append('<p style="color:#666;font-style:italic">No new announcements since last run.</p>')
+
+    parts.append(
+        '<hr style="margin-top:24px;border:none;border-top:1px solid #eee">'
+        '<p style="font-size:11px;color:#999">Generated by canvas-deadline-agent. '
+        'High-confidence deadlines are extracted from explicit dates+times. '
+        'Medium/low items resolved relative phrasing or vague timing — please verify.</p>'
+    )
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _text(deadlines, summaries, announcements_by_id, ics_path) -> str:
+    lines: list[str] = []
+    lines.append(f"NEW DEADLINES ({len(deadlines)})")
+    lines.append("-" * 50)
+    if deadlines:
+        for d in deadlines:
+            lines.append(
+                f"- {_fmt_dt(d.datetime_local, d.all_day)} — {d.title} [{d.confidence.upper()}]"
+            )
+            lines.append(f'    {d.source_course} · "{d.evidence_quote}"')
+            lines.append(f"    {d.source_url}")
+        if ics_path is not None:
+            lines.append(f"\nAttached: {ics_path.name}")
+    else:
+        lines.append("(none)")
+
+    lines.append("")
+    lines.append(f"NEW ANNOUNCEMENTS ({len(summaries)})")
+    lines.append("-" * 50)
+    if summaries:
+        for s in summaries:
+            a = announcements_by_id.get(s.announcement_id)
+            if not a:
+                continue
+            lines.append(f"- {a.course_name} — {a.title}")
+            lines.append(f"    {s.summary}")
+            lines.append(f"    {a.html_url}")
+    else:
+        lines.append("(none)")
+    return "\n".join(lines)
+
+
+def write_artifacts(artifacts: DigestArtifacts, out_dir: Path) -> dict:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    paths = {
+        "subject": out_dir / "subject.txt",
+        "html": out_dir / "digest.html",
+        "text": out_dir / "digest.txt",
+    }
+    paths["subject"].write_text(artifacts.subject)
+    paths["html"].write_text(artifacts.html_body)
+    paths["text"].write_text(artifacts.text_body)
+    if artifacts.ics_path is not None:
+        paths["ics"] = artifacts.ics_path
+    return {k: str(v) for k, v in paths.items()}

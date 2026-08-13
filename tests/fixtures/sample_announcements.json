@@ -1,0 +1,45 @@
+{
+  "courses": [
+    {"id": 101, "name": "Strategy II", "course_code": "MGT-501"},
+    {"id": 102, "name": "Operations Management", "course_code": "OPS-410"},
+    {"id": 103, "name": "Data-Driven Decision Making", "course_code": "DDA-330"}
+  ],
+  "announcements": [
+    {
+      "id": 5001,
+      "course_id": 101,
+      "course_name": "Strategy II",
+      "title": "Take-home midterm logistics",
+      "message_html": "<p>Dear class,</p><p>Reminder: the take-home midterm is due <strong>Friday, May 15 at 5:00pm</strong> Beijing time. Submit on Canvas. Late submissions will not be accepted.</p><p>Best, Prof Wang</p>",
+      "posted_at": "2026-05-08T03:21:00+00:00",
+      "html_url": "https://canvas.example.edu/courses/101/discussion_topics/5001"
+    },
+    {
+      "id": 5002,
+      "course_id": 102,
+      "course_name": "Operations Management",
+      "title": "Group case write-up — due Monday",
+      "message_html": "<p>Hi all,</p><p>The group case write-up on Toyota Production System is due <em>this Monday by EOD</em>. Please email PDFs to your TA.</p><p>Note: office hours moved to Wednesday 2-4pm this week.</p>",
+      "posted_at": "2026-05-08T07:00:00+00:00",
+      "html_url": "https://canvas.example.edu/courses/102/discussion_topics/5002"
+    },
+    {
+      "id": 5003,
+      "course_id": 103,
+      "course_name": "Data-Driven Decision Making",
+      "title": "Class on Thursday cancelled",
+      "message_html": "<p>Hi everyone, I'll be in Beijing on Thursday so class is cancelled. Make-up session TBD.</p>",
+      "posted_at": "2026-05-07T22:30:00+00:00",
+      "html_url": "https://canvas.example.edu/courses/103/discussion_topics/5003"
+    },
+    {
+      "id": 5004,
+      "course_id": 101,
+      "course_name": "Strategy II",
+      "title": "Reading reflection — due next Wednesday",
+      "message_html": "<p>Submit a 1-page reflection on the Christensen reading by next Wednesday. End of day is fine.</p>",
+      "posted_at": "2026-05-07T15:00:00+00:00",
+      "html_url": "https://canvas.example.edu/courses/101/discussion_topics/5004"
+    }
+  ]
+}

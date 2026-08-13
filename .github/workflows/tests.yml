@@ -1,0 +1,78 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: nothing here needs write access, and no job consumes
+# untrusted event data (the only expression used is matrix.python-version).
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest -q
+
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the cron runner parses
+        run: bash -n cron_ddl.sh
+
+      - name: Shellcheck
+        run: |
+          sudo apt-get update && sudo apt-get install -y shellcheck
+          # SC2086 is intentional: NOTIFY_CMD is a user-supplied command string
+          # that must word-split into argv.
+          shellcheck --severity=warning --exclude=SC2086 cron_ddl.sh
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No credentials or personal data in tracked files
+        run: |
+          set -uo pipefail
+          # Fails the build if a real secret or personal identifier is ever
+          # committed. Placeholders in .env.example are allowed, and .github is
+          # excluded so this pattern does not match its own definition.
+          if git ls-files -z -- ':!.github/**' | xargs -0 grep -nEi \
+              'CANVAS_TOKEN=[A-Za-z0-9~]{15,}|SERVERCHAN_SENDKEY=SCT[0-9]|BEGIN [A-Z ]*PRIVATE KEY|"client_secret"|\+[0-9]{10,}' \
+              | grep -viE 'example|paste_your|your_'; then
+            echo "::error::Possible secret or personal data in a tracked file"
+            exit 1
+          fi
+          echo "clean"
+
+      - name: Sensitive paths are actually gitignored
+        run: |
+          set -euo pipefail
+          for f in .env token.json credentials.json state.json deadlines_ledger.json; do
+            if ! git check-ignore -q "$f"; then
+              echo "::error::$f is not gitignored"
+              exit 1
+            fi
+          done
+          echo "all sensitive paths ignored"
