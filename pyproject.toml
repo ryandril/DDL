@@ -1,17 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "ddl"
 version = "0.3.0"
 description = "Extract assignment deadlines buried in Canvas announcements, sync them to Google Calendar, and get a daily digest."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["canvas", "lms", "deadlines", "calendar", "students", "automation"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Education",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Education",
     "Topic :: Utilities",
 ]
@@ -30,6 +35,14 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+
+# DDL is run as scripts from its own directory (see cron_ddl.sh), not imported
+# as a library, so nothing is installed onto the import path. This file exists
+# to declare metadata and to install the dependencies with one command.
+# Without the empty list, setuptools refuses to build: it finds a dozen
+# top-level modules in a flat layout and will not guess which to package.
+[tool.setuptools]
+py-modules = []
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
