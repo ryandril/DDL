@@ -157,6 +157,16 @@ To try it without hitting Canvas at all:
 .venv/bin/python fetch.py --dry-run-fixtures tests/fixtures/sample_announcements.json -v
 ```
 
+The sample announcements are dated May 2026, so if you run the full sequence
+against them the digest will show the four announcements but **no upcoming
+deadlines, and no `.ics`** — the extracted deadline has already passed and the
+ledger pruned it. That is the pruning working, not a failure. To see what the
+extractor actually found, look at `out/deadlines.json`:
+
+```bash
+cat out/deadlines.json   # 1 deadline: 2026-05-15T17:00:00, confidence "high"
+```
+
 ## Scheduling it
 
 `cron_ddl.sh` runs all of the above, in the right order, with the failure
