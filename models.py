@@ -2,9 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Literal
-from zoneinfo import ZoneInfo
 
 Confidence = Literal["high", "medium", "low"]
 
@@ -21,10 +19,6 @@ class ExtractedDeadline:
     source_url: str
     source_course: str
 
-    def aware_datetime(self) -> datetime:
-        dt = datetime.fromisoformat(self.datetime_local)
-        return dt.replace(tzinfo=ZoneInfo(self.timezone))
-
     @classmethod
     def from_dict(cls, d: dict) -> "ExtractedDeadline":
         return cls(
@@ -39,19 +33,6 @@ class ExtractedDeadline:
             source_course=d.get("source_course", ""),
         )
 
-    def to_dict(self) -> dict:
-        return {
-            "title": self.title,
-            "datetime_local": self.datetime_local,
-            "timezone": self.timezone,
-            "all_day": self.all_day,
-            "confidence": self.confidence,
-            "evidence_quote": self.evidence_quote,
-            "source_announcement_id": self.source_announcement_id,
-            "source_url": self.source_url,
-            "source_course": self.source_course,
-        }
-
 
 @dataclass
 class AnnouncementSummary:
@@ -61,6 +42,3 @@ class AnnouncementSummary:
     @classmethod
     def from_dict(cls, d: dict) -> "AnnouncementSummary":
         return cls(announcement_id=int(d["announcement_id"]), summary=d["summary"])
-
-    def to_dict(self) -> dict:
-        return {"announcement_id": self.announcement_id, "summary": self.summary}
