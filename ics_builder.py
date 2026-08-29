@@ -1,7 +1,7 @@
 """Build a .ics file from extracted deadlines."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 

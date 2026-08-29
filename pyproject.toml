@@ -23,12 +23,8 @@ classifiers = [
 dependencies = [
     "httpx>=0.27",
     "icalendar>=5.0",
-    "python-dateutil>=2.9",
     "beautifulsoup4>=4.12",
     "python-dotenv>=1.0",
-    "google-api-python-client>=2.130",
-    "google-auth-oauthlib>=1.2",
-    "google-auth-httplib2>=0.2",
 ]
 
 [project.optional-dependencies]

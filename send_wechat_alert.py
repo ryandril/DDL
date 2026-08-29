@@ -5,8 +5,8 @@ DDL -> WeChat alert sender.
 NOT REQUIRED TO RUN DDL. This is the author's own notifier, kept in the repo as
 a worked example of a richer $NOTIFY_CMD. It needs OpenClaw (for the WeChat
 channel) and the `gog` Google CLI (for the email fallback), so it will not work
-out of the box. The default notifier is serverchan_push.py, which needs only a
-Server酱 SendKey — see the Notifications section of the README.
+out of the box. Point NOTIFY_CMD at your own sender instead; it needs only a
+the notifier NOTIFY_CMD points at — see the Notifications section of the README.
 
 Renders the morning Canvas digest and sends it directly via `openclaw message
 send`, so delivery does not depend on an agent being available.

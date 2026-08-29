@@ -33,7 +33,6 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv

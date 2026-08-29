@@ -121,7 +121,6 @@ class CanvasClient:
             target_courses = courses
         else:
             target_courses = self.list_active_courses()
-        self._course_name_by_id = {c.id: c.name for c in target_courses}
         results = []
         for course in target_courses:
             for f in self.list_files(course.id, course_name=course.name):
