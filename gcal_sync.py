@@ -40,7 +40,6 @@ from models import ExtractedDeadline
 
 log = logging.getLogger("ddl-gcal")
 
-ROOT = Path(__file__).parent
 DEFAULT_CALENDAR_NAME = os.environ.get("CALENDAR_NAME", "Canvas Deadlines")
 # Resolve gog by absolute path — cron's PATH (/usr/bin:/bin) usually excludes
 # /usr/local/bin, so bare "gog" would fail under cron even though it works in
@@ -56,7 +55,7 @@ LIST_TO = "2028-01-01T00:00:00+08:00"
 # --------------------------------------------------------------------------- #
 # gog subprocess helpers
 # --------------------------------------------------------------------------- #
-def _run(args: list[str], *, json_out: bool, dry_run: bool = False) -> tuple[int, str, str]:
+def _run(args: list[str], *, json_out: bool) -> tuple[int, str, str]:
     """Run a gog command. Returns (returncode, stdout, stderr)."""
     cmd = [GOG]
     if json_out:
@@ -111,6 +110,26 @@ def find_or_create_calendar(name: str, create_if_missing: bool) -> str:
 
 
 def deadline_uid(d: ExtractedDeadline) -> str:
+    """Stable calendar identity for a deadline.
+
+    MUST agree with the ledger's own identity (course|datetime|title), or two
+    records the ledger keeps apart collapse into one calendar event and the
+    second silently overwrites the first. The due datetime is therefore part of
+    the hash: one announcement can legitimately state the same deliverable at
+    two different times (a draft and a final), and both must land.
+    """
+    h = hashlib.sha256(f"{d.title}|{d.datetime_local}".encode()).hexdigest()[:10]
+    return f"ddl-canvas-{d.source_announcement_id}-{h}@ddl"
+
+
+def legacy_deadline_uid(d: ExtractedDeadline) -> str:
+    """The pre-2026-08 uid, hashed on the title alone.
+
+    Kept only so events already on the calendar are adopted and updated in
+    place instead of being duplicated under the new scheme. Because the old
+    scheme could not tell two same-titled deadlines apart, a legacy event is
+    claimed by at most one record per run (see upsert).
+    """
     h = hashlib.sha256(d.title.encode()).hexdigest()[:10]
     return f"ddl-canvas-{d.source_announcement_id}-{h}@ddl"
 
@@ -227,6 +246,16 @@ def _update_args(calendar_id: str, event_id: str, d: ExtractedDeadline) -> list[
 def upsert(calendar_id: str, d: ExtractedDeadline, existing: dict[str, dict], dry_run: bool) -> str:
     uid = deadline_uid(d)
     ev = existing.get(uid)
+    if ev is None:
+        # Adopt an event created under the old title-only uid so the scheme
+        # change doesn't duplicate the calendar. pop() not get(): the old uid is
+        # ambiguous by construction, so only the first record may claim it and
+        # any other record sharing it gets its own new event.
+        legacy = legacy_deadline_uid(d)
+        if legacy != uid:
+            ev = existing.pop(legacy, None)
+            if ev is not None:
+                log.info("adopting legacy-uid event for %s", _summary(d))
     if ev is not None:
         same = (
             ev.get("summary") == _summary(d)
@@ -248,11 +277,10 @@ def upsert(calendar_id: str, d: ExtractedDeadline, existing: dict[str, dict], dr
     rc, out, err = _run(_create_args(calendar_id, d), json_out=True)
     if rc != 0:
         raise RuntimeError(f"create failed: {err.strip() or out.strip()}")
-    # Register the new event under its uid so a second deadline mapping to the
-    # SAME uid later in this run (uid is announcement+title, not datetime) takes
-    # the update path instead of inserting a duplicate event. If gog's output
-    # isn't parseable, store a stub — the second record then fails loudly in
-    # update (no id) rather than silently duplicating.
+    # Register the new event under its uid so a genuine restatement of the same
+    # deadline later in this run takes the update path instead of inserting a
+    # duplicate. If gog's output isn't parseable, store a stub — that record
+    # then fails loudly in update (no id) rather than silently duplicating.
     try:
         created = json.loads(out)
         if isinstance(created, dict):
