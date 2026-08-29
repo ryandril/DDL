@@ -30,9 +30,24 @@ TRIGGER="$DDL_DIR/.cron_trigger.json"
 OUT="$DDL_DIR/out"
 DATE_LABEL=$(date '+%b %-d')
 
-# How to deliver the digest. Default is the dependency-free Server酱 push;
-# set NOTIFY_CMD in .env to use your own sender (see README).
-NOTIFY_CMD="${NOTIFY_CMD:-$PYBIN $DDL_DIR/serverchan_push.py --title-file $OUT/subject.txt --body-file $OUT/digest.txt}"
+# How to deliver the digest. NOTIFY_CMD is your primary channel — any command
+# that delivers out/subject.txt and out/digest.txt. Email is the FALLBACK and
+# needs no command: if NOTIFY_CMD is unset, or it exits non-zero, the digest is
+# emailed via emailer.py. A run must never end with the user uninformed.
+NOTIFY_CMD="${NOTIFY_CMD:-}"
+
+notify() {
+    if [ -n "$NOTIFY_CMD" ]; then
+        if $NOTIFY_CMD >> "$LOG" 2>&1; then
+            return 0
+        fi
+        echo "[DDL Cron] NOTIFY_CMD failed — falling back to email" >> "$LOG"
+    fi
+    if "$PYBIN" emailer.py --send --out-dir "$OUT" >> "$LOG" 2>&1; then
+        return 0
+    fi
+    echo "[DDL Cron] email fallback did not deliver — digest is in $OUT/digest.txt" >> "$LOG"
+}
 
 echo "[DDL Cron] $(date '+%Y-%m-%d %H:%M:%S') — Starting" >> "$LOG"
 
@@ -42,8 +57,11 @@ FETCH_RC=${PIPESTATUS[0]}
 
 if [ "$FETCH_RC" -ne 0 ]; then
     echo "[DDL Cron] fetch.py FAILED rc=$FETCH_RC — sending status with last-known deadlines" >> "$LOG"
-    # Refresh/prune the ledger so the message still shows standing upcoming deadlines.
+    # Refresh/prune the ledger AND rebuild the digest from it, so the message
+    # carries today's standing deadlines rather than the last successful run's.
+    # Read-only: nothing was fetched, so nothing may be marked seen.
     "$PYBIN" deadline_ledger.py --out-dir "$OUT" 2>&1 | tail -2 >> "$LOG" || true
+    "$PYBIN" build.py --out-dir "$OUT" --no-state-update 2>&1 | tail -2 >> "$LOG" || true
     "$PYBIN" - "$TRIGGER" "$DATE_LABEL" "$FETCH_RC" <<'PY' >> "$LOG" 2>&1
 import json, sys
 trigger, date, rc = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -51,13 +69,13 @@ json.dump({"action": "failure", "date": date,
            "error": f"fetch.py exited {rc} — check the Canvas token in .env or network."},
           open(trigger, "w"), ensure_ascii=False)
 PY
-    $NOTIFY_CMD >> "$LOG" 2>&1 || echo "[DDL Cron] send exit=$?" >> "$LOG"
+    notify
     echo "[DDL Cron] Done (fetch-failure path) at $(date)" >> "$LOG"
     exit 0
 fi
 
 # --- announcement count ---
-COUNT=$("$PYBIN" -c "import json; print(len(json.load(open('$OUT/announcements.json'))['announcements']))" 2>/dev/null || echo 0)
+COUNT=$("$PYBIN" -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["announcements"]))' "$OUT/announcements.json" 2>/dev/null || echo 0)
 echo "[DDL Cron] Found $COUNT new announcement(s)" >> "$LOG"
 
 # --- Step 2: extract deadlines (only if new announcements) ---
@@ -78,14 +96,23 @@ fi
 # ddlUid, so re-running is safe and any missed/failed day self-heals next run.
 "$PYBIN" gcal_sync.py --deadlines "$OUT/ledger_view.json" --create-calendar 2>&1 | tail -3 >> "$LOG" || true
 
-# --- Step 3c: build .ics/digest + COMMIT seen-IDs — AFTER the ledger persisted.
-# Ordering matters: build.py marks announcements as seen in state.json; doing
-# that before the ledger merge meant a crash between the two steps lost the
-# deadline forever (seen but never durably saved). If extraction failed, skip
-# so the announcements stay unseen and next run retries them.
-if [ "$COUNT" -gt 0 ] && [ "$EXTRACT_RC" -eq 0 ]; then
-    "$PYBIN" build.py --out-dir "$OUT" 2>&1 | tail -3 >> "$LOG" || true          # commits seen-IDs to state.json
+# --- Step 3c: build .ics/digest EVERY day, from the DURABLE ledger ----------
+# Not gated on new announcements: build.py reads out/ledger_view.json, and on a
+# quiet day the answer is "here is what is still upcoming", not last week's
+# digest left on disk. Skipping the build is how a daily notifier ends up
+# re-sending the same stale message.
+#
+# Committing seen-IDs is a SEPARATE concern that stays gated. build.py writes
+# them to state.json, which must happen only AFTER the ledger persisted (a
+# crash between the two left an announcement seen but its deadline never
+# saved), and only when this run actually extracted successfully. Otherwise the
+# build runs read-only so those announcements stay unseen and the next run
+# retries them.
+BUILD_ARGS=(--out-dir "$OUT")
+if [ "$COUNT" -eq 0 ] || [ "$EXTRACT_RC" -ne 0 ]; then
+    BUILD_ARGS+=(--no-state-update)
 fi
+"$PYBIN" build.py "${BUILD_ARGS[@]}" 2>&1 | tail -3 >> "$LOG" || true
 
 # --- Step 4: write trigger (announcement summary; deadlines come from the ledger view) ---
 "$PYBIN" - "$TRIGGER" "$DATE_LABEL" "$COUNT" "$OUT/announcements.json" <<'PY' >> "$LOG" 2>&1
@@ -102,5 +129,5 @@ json.dump({"action": "new_deadlines" if count > 0 else "no_announcements",
 PY
 
 # --- Step 5: notify (ALWAYS) ---
-$NOTIFY_CMD >> "$LOG" 2>&1 || echo "[DDL Cron] notify exit=$?" >> "$LOG"
+notify
 echo "[DDL Cron] Done at $(date)" >> "$LOG"

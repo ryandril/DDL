@@ -1,16 +1,27 @@
-"""Compose the digest email (HTML + plaintext) and write outputs to disk.
+"""Compose the digest email (HTML + plaintext), write it to disk, and send it.
 
-Sending is handled outside this module: in local-test mode the user (or the
-Claude session) attaches the .ics and creates a Gmail draft; in routine mode
-the routine's Gmail tool does the same. This module only assembles content.
+Sending is the email FALLBACK: cron runs $NOTIFY_CMD first, and drops to
+`emailer.py --send` when that command is unset or fails, so a run never ends
+with the user uninformed. Delivery is stdlib smtplib — no extra dependency and
+no CLI to install — configured entirely through SMTP_HOST / SMTP_PORT /
+SMTP_USER / SMTP_PASS / EMAIL_FROM / EMAIL_TO in .env.
 """
 from __future__ import annotations
 
+import argparse
 import html
+import logging
 import os
+import smtplib
+import sys
 from dataclasses import dataclass
 from datetime import datetime
+from email.message import EmailMessage
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+log = logging.getLogger("ddl-emailer")
 
 
 @dataclass
@@ -174,3 +185,84 @@ def write_artifacts(artifacts: DigestArtifacts, out_dir: Path) -> dict:
     if artifacts.ics_path is not None:
         paths["ics"] = artifacts.ics_path
     return {k: str(v) for k, v in paths.items()}
+
+
+# --------------------------------------------------------------------------- #
+# delivery (the email fallback)
+# --------------------------------------------------------------------------- #
+def build_message(subject: str, text_body: str, html_body: str | None, *,
+                  sender: str, to: list[str], ics_path: Path | None = None) -> EmailMessage:
+    """Assemble the digest as a real multipart message.
+
+    Plaintext is the body every client can render; the HTML alternative is a
+    nicety. The .ics rides along so a reader with no calendar sync can still
+    import the deadlines by hand.
+    """
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = ", ".join(to)
+    msg.set_content(text_body or "(no digest body was generated for this run)")
+    if html_body:
+        msg.add_alternative(html_body, subtype="html")
+    if ics_path is not None and ics_path.exists():
+        msg.add_attachment(ics_path.read_bytes(), maintype="text",
+                           subtype="calendar", filename=ics_path.name)
+    return msg
+
+
+def send(out_dir: Path, *, smtp_factory=None) -> bool:
+    """Email the artifacts in out_dir. Returns True only on a delivered message.
+
+    Never raises: this is the last step of a best-effort cron pipeline, and a
+    failure here must be logged rather than allowed to kill the run.
+    """
+    out_dir = Path(out_dir)
+    host = (os.environ.get("SMTP_HOST") or "").strip()
+    to = [a.strip() for a in (os.environ.get("EMAIL_TO") or "").split(",") if a.strip()]
+    if not host or not to:
+        log.error("email fallback not configured — set SMTP_HOST and EMAIL_TO in .env")
+        return False
+
+    def _read(name: str, default: str = "") -> str:
+        f = out_dir / name
+        return f.read_text() if f.exists() else default
+
+    subject = _read("subject.txt").strip() or "Canvas deadlines"
+    ics = out_dir / "deadlines.ics"
+    sender = (os.environ.get("EMAIL_FROM") or os.environ.get("SMTP_USER") or to[0]).strip()
+    msg = build_message(subject, _read("digest.txt"), _read("digest.html") or None,
+                        sender=sender, to=to, ics_path=ics if ics.exists() else None)
+
+    factory = smtp_factory or smtplib.SMTP
+    user, password = os.environ.get("SMTP_USER"), os.environ.get("SMTP_PASS")
+    try:
+        with factory(host, int(os.environ.get("SMTP_PORT") or 587)) as smtp:
+            if (os.environ.get("SMTP_STARTTLS") or "1") != "0":
+                smtp.starttls()
+            if user and password:
+                smtp.login(user, password)
+            smtp.send_message(msg)
+    except Exception as e:  # noqa: BLE001 — any failure is just "not delivered"
+        log.error("email fallback failed: %s", e)
+        return False
+    log.info("digest emailed to %s", ", ".join(to))
+    return True
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(description="Send the composed digest (email fallback).")
+    p.add_argument("--send", action="store_true", help="deliver out-dir's digest by SMTP")
+    p.add_argument("--out-dir", type=Path, default=Path("out"))
+    p.add_argument("--verbose", "-v", action="store_true")
+    args = p.parse_args(argv)
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    if not args.send:
+        p.error("nothing to do — pass --send")
+    load_dotenv()
+    return 0 if send(args.out_dir) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
