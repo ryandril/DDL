@@ -141,3 +141,102 @@ def test_provenance_is_carried_through():
     assert d["source_course"] == "Strategy II"
     assert d["source_url"].startswith("https://canvas.example.edu/")
     assert d["evidence_quote"]  # non-empty, so a human can check the claim
+
+
+# --- titles name the right deliverable -------------------------------------
+
+def test_title_comes_from_the_deliverable_in_the_same_sentence():
+    found = extract_from_announcement(
+        ann("Case analysis due 5pm Nov 3. Peer evaluation due Nov 10."), TZ
+    )
+    by_date = {d["datetime_local"][:10]: d["title"] for d in found}
+    assert by_date["2026-11-03"] == "Case Analysis"
+    assert by_date["2026-11-10"] == "Peer Evaluation"
+
+
+def test_a_deliverable_in_a_neighbouring_sentence_does_not_steal_the_title():
+    d = only("The interim report is due Nov 3. Peer evaluation opens afterwards.")
+    assert d["title"] == "Interim Report"
+
+
+def test_problem_sets_and_homework_are_recognised_deliverables():
+    assert only("Problem set 4 is due Nov 3.")["title"] == "Problem Set"
+    assert only("Homework is due Nov 3.")["title"] == "Homework"
+
+
+# --- numeric date shapes ---------------------------------------------------
+
+@pytest.mark.parametrize(
+    "phrase,expected",
+    [
+        ("due 5/15/2026 at 5pm", "2026-05-15T17:00:00"),   # month-first, explicit year
+        ("due 15/05/2026", "2026-05-15T23:59:00"),          # day-first, unambiguous
+        ("due 15.05.2026", "2026-05-15T23:59:00"),          # dotted, day-first
+        ("due 5/15/26", "2026-05-15T23:59:00"),             # two-digit year
+        ("due 5/15", "2026-05-15T23:59:00"),                # no year, from posted_at
+    ],
+)
+def test_numeric_date_shapes(phrase, expected):
+    assert only(f"The report is {phrase}.")["datetime_local"] == expected
+
+
+def test_ambiguous_numeric_date_follows_the_configured_order():
+    from extract_deadlines import extract_from_announcement as ex
+    a = ann("The report is due 5/6/2026.")
+    assert ex(a, TZ, date_order="MDY")[0]["datetime_local"].startswith("2026-05-06")
+    assert ex(a, TZ, date_order="DMY")[0]["datetime_local"].startswith("2026-06-05")
+
+
+def test_an_impossible_numeric_date_is_ignored():
+    assert extract_from_announcement(ann("Submit form 13/32/2026 for review."), TZ) == []
+
+
+def test_a_decimal_number_is_not_read_as_a_date():
+    assert extract_from_announcement(
+        ann("Submissions must be under 1.5 MB; the limit is strict."), TZ
+    ) == []
+
+
+def test_an_iso_date_is_not_double_matched_as_a_numeric_date():
+    found = extract_from_announcement(ann("Report due 2026/05/15."), TZ)
+    assert len(found) == 1
+    assert found[0]["datetime_local"].startswith("2026-05-15")
+
+
+# --- precision: things that look like deadlines but are not -----------------
+
+def test_a_date_inside_a_url_is_not_a_deadline():
+    assert extract_from_announcement(
+        ann("Submission spec: https://canvas.example.edu/files/2026-05-15/spec.pdf"), TZ
+    ) == []
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "The report was due May 15 and has now been graded.",
+        "The essay were due May 15, so marks are final.",
+        "The paper had been due May 15 before the extension.",
+    ],
+)
+def test_a_past_tense_cue_is_not_a_live_deadline(phrase):
+    assert extract_from_announcement(ann(phrase), TZ) == []
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "The May 15 deadline is cancelled; no submission is required.",
+        "The May 15 submission has been canceled.",
+        "The quiz due May 15 is waived this term.",
+        "You no longer need to submit the report on May 15.",
+    ],
+)
+def test_a_cancelled_deadline_is_not_extracted(phrase):
+    assert extract_from_announcement(ann(phrase), TZ) == []
+
+
+def test_a_postponed_deadline_is_still_a_deadline():
+    # "postponed to" moves a deadline; it does not remove one.
+    d = only("The report deadline is postponed to May 22.")
+    assert d["datetime_local"].startswith("2026-05-22")
