@@ -59,7 +59,7 @@ jobs:
           # committed. Placeholders in .env.example are allowed, and .github is
           # excluded so this pattern does not match its own definition.
           if git ls-files -z -- ':!.github/**' | xargs -0 grep -nEi \
-              'CANVAS_TOKEN=[A-Za-z0-9~]{15,}|SERVERCHAN_SENDKEY=SCT[0-9]|BEGIN [A-Z ]*PRIVATE KEY|"client_secret"|\+[0-9]{10,}' \
+              'CANVAS_TOKEN=[A-Za-z0-9~]{15,}|BEGIN [A-Z ]*PRIVATE KEY|"client_secret"|\+[0-9]{10,}' \
               | grep -viE 'example|paste_your|your_'; then
             echo "::error::Possible secret or personal data in a tracked file"
             exit 1

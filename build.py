@@ -75,6 +75,42 @@ def _announcement_from_dict(d: dict) -> Announcement:
     )
 
 
+def _records_from(raw: object) -> list[dict]:
+    """Accept any of the three shapes a deadline file comes in."""
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, dict):
+        for key in ("all_upcoming", "deadlines"):
+            value = raw.get(key)
+            if value is not None:
+                return value
+    return []
+
+
+def read_deadline_records(out_dir: Path) -> list[dict]:
+    """The deadlines this digest describes, newest source of truth first.
+
+    ledger_view.json is DURABLE and complete; deadlines.json holds only what
+    this one run extracted and is empty on most days. The first file that
+    exists wins outright — an empty ledger view means "nothing is upcoming",
+    NOT "fall through to whatever the last announcement-bearing day left
+    behind", which is how a daily notifier ends up re-sending stale deadlines.
+    """
+    for name in ("ledger_view.json", "deadlines.json"):
+        path = out_dir / name
+        if path.exists():
+            return _records_from(json.loads(path.read_text()))
+    return []
+
+
+def _due_at(d: ExtractedDeadline, fallback_tz: ZoneInfo) -> datetime:
+    try:
+        rec_tz = ZoneInfo(d.timezone) if d.timezone else fallback_tz
+    except Exception:
+        rec_tz = fallback_tz
+    return datetime.fromisoformat(d.datetime_local).replace(tzinfo=rec_tz)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--out-dir", type=Path, default=Path("out"))
@@ -90,7 +126,6 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     announcements_path = args.out_dir / "announcements.json"
-    deadlines_path = args.out_dir / "deadlines.json"
     summaries_path = args.out_dir / "summaries.json"
 
     if not announcements_path.exists():
@@ -105,17 +140,16 @@ def main(argv: list[str] | None = None) -> int:
     log.info("Loaded %d announcements", len(announcements))
 
     now_local = datetime.now(tz=tz)
-    deadlines: list[ExtractedDeadline] = []
-    if deadlines_path.exists():
-        all_deadlines = [ExtractedDeadline.from_dict(d) for d in json.loads(deadlines_path.read_text())]
-        # Drop deadlines more than 24h in the past (don't remind about ancient ones)
-        deadlines = [
-            d for d in all_deadlines
-            if datetime.fromisoformat(d.datetime_local).replace(tzinfo=tz) > now_local - timedelta(hours=24)
-        ]
-        dropped = len(all_deadlines) - len(deadlines)
-        if dropped:
-            log.info("Dropped %d past deadline(s) from output", dropped)
+    all_deadlines = [ExtractedDeadline.from_dict(d) for d in read_deadline_records(args.out_dir)]
+    # Drop deadlines more than 24h in the past (don't remind about ancient ones).
+    # Each record is compared in ITS OWN timezone: a wall time of 23:30 is a
+    # different instant in Shanghai and New York, and getting that wrong
+    # silently moves a deadline in or out of the digest by up to a day.
+    cutoff = now_local - timedelta(hours=24)
+    deadlines = [d for d in all_deadlines if _due_at(d, tz) > cutoff]
+    dropped = len(all_deadlines) - len(deadlines)
+    if dropped:
+        log.info("Dropped %d past deadline(s) from output", dropped)
     log.info("Loaded %d active deadlines", len(deadlines))
 
     if summaries_path.exists():
